@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reconocedor de Articulaciones Móvil</title>
+        <style>
+        /* CSS para centrar la visualización */
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1e1e1e; /* Fondo oscuro */
+            color: white;
+            font-family: Arial, sans-serif;
+            flex-direction: column;
+        }
+        h1 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+        /* El canvas y el video se superponen */
+        #video, #canvas {
+            position: absolute;
+            transform: scaleX(-1); /* Hace que la cámara frontal se vea como un espejo */
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+        }
+        /* Ocultamos el video porque dibujaremos sobre el canvas */
+        #video {
+            display: none; 
+        }
+        /* Mensaje de carga */
+        #loading {
+            position: absolute;
+            font-size: 1.5em;
+            color: #4CAF50;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+    </style>
+        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
+    </head>
+    <body>
+        <div id="loading">Cargando modelo...</div>
+
+        <video id="video" playsinline></video>
+
+        <canvas id="canvas"></canvas>
+
+        <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const loadingMessage = document.getElementById('loading');
+        const ctx = canvas.getContext('2d');
+        let net; // Variable para almacenar el modelo PoseNet
+        
+        // Parámetros de PoseNet optimizados para móviles
+        const poseNetParameters = {
+            architecture: 'MobileNetV1',
+            outputStride: 16,
+            inputResolution: { width: 320, height: 240 },
+            multiplier: 0.75,
+            quantBytes: 2
+        };
+
+        // --- 1. Configurar y cargar el video de la cámara ---
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    'video': {
+                        facingMode: 'user' // Usa la cámara frontal
+                    },
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve(video);
+                    };
+                });
+            } catch (e) {
+                alert('ERROR: No se pudo acceder a la cámara. Revisa los permisos.');
+                console.error(e);
+            }
+        }
+
+        // --- 2. Cargar el modelo PoseNet ---
+        async function loadPosenet() {
+            net = await posenet.load(poseNetParameters);
+            loadingMessage.style.display = 'none'; // Ocultar mensaje de carga
+            console.log('Modelo PoseNet cargado y listo.');
+        }
+
+        // --- 3. Bucle de Detección (Main Loop) ---
+        function detectPose() {
+            // Ajustar el canvas al tamaño del video
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            canvas.width = videoWidth;
+            canvas.height = videoHeight;
+
+            // Dibujar el video en el canvas
+            ctx.clearRect(0, 0, videoWidth, videoHeight);
+            
+            // DIBUJAR VIDEO REFLEJADO
+            ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
+
+            // Detectar la pose
+            net.estimateSinglePose(video, {
+                flipHorizontal: false // Ya reflejamos la imagen con CSS/transform: scaleX(-1)
+            }).then(pose => {
+                
+                // Dibujar puntos y esqueleto (si hay detección)
+                if (pose) {
+                    drawKeypoints(pose.keypoints);
+                    drawSkeleton(pose.keypoints);
+                }
+            });
+
+            // Repetir el proceso
+            requestAnimationFrame(detectPose);
+        }
+
+        // --- 4. Funciones de Dibujo ---
+
+        // Función para dibujar los puntos (articulaciones)
+        function drawKeypoints(keypoints) {
+            for (let i = 0; i < keypoints.length; i++) {
+                const keypoint = keypoints[i];
+                if (keypoint.score > 0.6) { // Solo si la confianza es alta
+                    const { y, x } = keypoint.position;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#FFEB3B'; // Amarillo para los puntos
+                    ctx.fill();
+                }
+            }
+        }
+        
+        // Función para dibujar las conexiones (esqueleto)
+        function drawSkeleton(keypoints) {
+            const adjacentKeyPoints = posenet.getAdjacentKeyPoints(keypoints, 0.6);
+
+            adjacentKeyPoints.forEach((pair) => {
+                drawSegment(toTuple(pair[0].position), toTuple(pair[1].position), '#4CAF50'); // Verde para las líneas
+            });
+        }
+
+        // Función auxiliar para dibujar una línea (segmento)
+        function drawSegment([ay, ax], [by, bx], color) {
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = color;
+            ctx.stroke();
+        }
+
+        // Función auxiliar para convertir el objeto de posición a una tupla [y, x]
+        function toTuple({ x, y }) {
+            return [y, x];
+        }
+
+
+        // --- 5. Función de Inicio Principal ---
+        async function init() {
+            try {
+                const videoElement = await setupCamera();
+                videoElement.play();
+                
+                await loadPosenet();
+                
+                // Esperar un momento para que el video esté listo antes de dibujar
+                setTimeout(() => {
+                    detectPose();
+                }, 100);
+
+            } catch (error) {
+                loadingMessage.textContent = "Error al iniciar: " + error.message;
+            }
+        }
+
+        // ¡Empezar todo!
+        window.onload = init;
+    </script>
+    </body>
+</html>
