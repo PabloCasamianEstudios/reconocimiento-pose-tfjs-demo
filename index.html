@@ -3,170 +3,526 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Reconocedor de Articulaciones Móvil - Visualizando</title>
+        <title>Detección de Articulaciones en Tiempo Real</title>
         <style>
-        /* CSS para centrar la visualización */
+        /* CSS optimizado para rendimiento */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
             margin: 0;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background: #1e1e1e;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             color: white;
-            font-family: Arial, sans-serif;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
             flex-direction: column;
+            padding: 20px;
         }
+        
+        /* Contenedor principal con mejoras visuales */
+        .container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
         /* El canvas y el video se superponen */
         #video, #canvas {
             position: absolute;
-            transform: scaleX(-1); /* Reflejo para la cámara frontal (modo espejo) */
-            border-radius: 8px;
-            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transform: scaleX(-1); /* Reflejo para la cámara frontal */
         }
-        /* Ocultamos el video porque dibujaremos sobre el canvas */
-        #video {
+        
+        #video { 
             display: none; 
         }
-        /* Mensaje de carga */
+        
+        /* Indicador de carga mejorado */
         #loading {
             position: absolute;
-            font-size: 1.5em;
-            color: #4CAF50;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 5px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2em;
+            color: #00ff88;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px 30px;
+            border-radius: 10px;
             z-index: 10;
+            border: 2px solid #00ff88;
+            backdrop-filter: blur(5px);
+            text-align: center;
+            min-width: 250px;
+        }
+        
+        /* Indicadores de rendimiento */
+        .stats {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            z-index: 5;
+            border-left: 3px solid #00ff88;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #00ff88, #00ccff);
+            color: black;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 255, 136, 0.4);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .threshold-slider {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #00ff88;
+        }
+        
+        input[type="range"] {
+            width: 150px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+            
+            .stats {
+                font-size: 0.8em;
+                padding: 5px 8px;
+            }
         }
     </style>
-        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+
+        <!-- TensorFlow.js optimizado -->
         <script
-            src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
+            src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
     </head>
     <body>
-        <div id="loading">Cargando modelo...</div>
+        <div class="container">
+            <div id="loading">Cargando TensorFlow.js y modelo MoveNet...</div>
+            <div class="stats" id="stats" style="display: none;">
+                FPS: <span id="fps">0</span> |
+                Puntos detectados: <span id="points">0</span>
+            </div>
 
-        <video id="video" playsinline></video>
+            <video id="video" playsinline></video>
+            <canvas id="canvas"></canvas>
 
-        <canvas id="canvas"></canvas>
+            <div class="controls">
+                <div class="threshold-slider">
+                    <label for="threshold">Umbral: <span
+                            id="threshold-value">0.35</span></label>
+                    <input type="range" id="threshold" min="0.1" max="0.9"
+                        step="0.05" value="0.35">
+                </div>
+                <button id="toggle-skeleton">Mostrar Esqueleto: ON</button>
+                <button id="toggle-points">Mostrar Puntos: ON</button>
+                <button id="reset-btn">Reiniciar Cámara</button>
+            </div>
+        </div>
 
         <script>
+        // ========== VARIABLES GLOBALES ==========
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const loadingMessage = document.getElementById('loading');
         const ctx = canvas.getContext('2d');
-        let net;
+        const statsDiv = document.getElementById('stats');
+        const fpsSpan = document.getElementById('fps');
+        const pointsSpan = document.getElementById('points');
+        const thresholdSlider = document.getElementById('threshold');
+        const thresholdValue = document.getElementById('threshold-value');
+        const toggleSkeletonBtn = document.getElementById('toggle-skeleton');
+        const togglePointsBtn = document.getElementById('toggle-points');
+        const resetBtn = document.getElementById('reset-btn');
         
-        const poseNetParameters = {
-            architecture: 'MobileNetV1',
-            outputStride: 16,
-            inputResolution: { width: 320, height: 240 },
-            multiplier: 0.75,
-            quantBytes: 2
+        let detector = null;
+        let animationFrameId = null;
+        let lastTimestamp = 0;
+        let frameCount = 0;
+        let fps = 0;
+        
+        // Configuración ajustable
+        let config = {
+            showSkeleton: true,
+            showPoints: true,
+            confidenceThreshold: 0.35,
+            modelType: 'lite', // 'lite' o 'full' - lite es más rápido
+            renderInterval: 1 // Renderizar cada frame (1 = todos)
         };
-
+        
+        // Conexiones del esqueleto humano (17 puntos de MoveNet)
+        const MOVENET_CONNECTIONS = [
+            [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], // Cabeza y brazos
+            [5, 7], [7, 9], [6, 8], [8, 10], [5, 6],        // Brazos y hombros
+            [5, 11], [6, 12], [11, 12],                      // Torso
+            [11, 13], [13, 15], [12, 14], [14, 16]           // Piernas
+        ];
+        
+        // ========== CONFIGURACIÓN DE CÁMARA ==========
         async function setupCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    'video': {
-                        facingMode: 'user'
-                    },
-                });
+                loadingMessage.textContent = "Solicitando acceso a la cámara...";
+                
+                // Intentar primero la cámara frontal
+                const constraints = {
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 30 }
+                    }
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
+                
                 return new Promise((resolve) => {
                     video.onloadedmetadata = () => {
+                        // Ajustar canvas al tamaño del video
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
                         resolve(video);
                     };
                 });
-            } catch (e) {
-                alert('ERROR: No se pudo acceder a la cámara. Revisa los permisos.');
-                console.error(e);
-            }
-        }
-
-        async function loadPosenet() {
-            net = await posenet.load(poseNetParameters);
-            loadingMessage.style.display = 'none';
-            console.log('Modelo PoseNet cargado y listo.');
-        }
-
-        function detectPose() {
-            const videoWidth = video.videoWidth;
-            const videoHeight = video.videoHeight;
-            canvas.width = videoWidth;
-            canvas.height = videoHeight;
-
-            // Dibujar el video en el canvas (lo que hace que veas tu propia imagen)
-            ctx.clearRect(0, 0, videoWidth, videoHeight);
-            ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
-
-            // Detectar la pose
-            net.estimateSinglePose(video, {
-                flipHorizontal: false
-            }).then(pose => {
+            } catch (error) {
+                console.error("Error al acceder a la cámara:", error);
                 
-                if (pose) {
-                    drawKeypoints(pose.keypoints); // Dibuja los puntos (articulaciones)
-                    drawSkeleton(pose.keypoints); // Dibuja las líneas (esqueleto)
-                }
-            });
-
-            requestAnimationFrame(detectPose);
-        }
-
-        // FUNCIÓN CLAVE: DIBUJAR PUNTOS GORDOS
-        function drawKeypoints(keypoints) {
-            for (let i = 0; i < keypoints.length; i++) {
-                const keypoint = keypoints[i];
-                if (keypoint.score > 0.6) {
-                    const { y, x } = keypoint.position;
-                    ctx.beginPath();
-                    ctx.arc(x, y, 5, 0, 2 * Math.PI); // **RADIO DEL PUNTO: 5**
-                    ctx.fillStyle = '#FFEB3B'; // **COLOR DEL PUNTO: AMARILLO BRILLANTE**
-                    ctx.fill();
+                // Intentar con restricciones más simples
+                try {
+                    loadingMessage.textContent = "Intentando configuración alternativa...";
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: true 
+                    });
+                    video.srcObject = stream;
+                    
+                    return new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            resolve(video);
+                        };
+                    });
+                } catch (fallbackError) {
+                    loadingMessage.innerHTML = `
+                        ERROR: No se pudo acceder a la cámara.<br>
+                        Asegúrate de:<br>
+                        1. Dar permisos de cámara al navegador<br>
+                        2. Tener una cámara conectada<br>
+                        3. No tener otra app usando la cámara<br><br>
+                        Error: ${fallbackError.message}
+                    `;
+                    throw fallbackError;
                 }
             }
         }
         
-        // FUNCIÓN CLAVE: DIBUJAR LÍNEAS DE CONEXIÓN
-        function drawSkeleton(keypoints) {
-            const adjacentKeyPoints = posenet.getAdjacentKeyPoints(keypoints, 0.6);
-
-            adjacentKeyPoints.forEach((pair) => {
-                drawSegment(toTuple(pair[0].position), toTuple(pair[1].position), '#4CAF50'); // **COLOR DE LA LÍNEA: VERDE**
-            });
-        }
-
-        function drawSegment([ay, ax], [by, bx], color) {
-            ctx.beginPath();
-            ctx.moveTo(ax, ay);
-            ctx.lineTo(bx, by);
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = color;
-            ctx.stroke();
-        }
-
-        function toTuple({ x, y }) {
-            return [y, x];
-        }
-
-        async function init() {
+        // ========== CARGA DEL MODELO ==========
+        async function loadPoseDetector() {
             try {
-                const videoElement = await setupCamera();
-                videoElement.play();
+                loadingMessage.textContent = "Cargando TensorFlow.js...";
                 
-                await loadPosenet();
+                // Configurar el backend de WebGL para aceleración GPU
+                await tf.setBackend('webgl');
+                await tf.ready();
                 
+                loadingMessage.textContent = "Cargando modelo MoveNet...";
+                
+                // Crear el detector de poses
+                const model = poseDetection.SupportedModels.MoveNet;
+                const detectorConfig = {
+                    modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+                    enableSmoothing: true,
+                    minPoseScore: 0.2
+                };
+                
+                detector = await poseDetection.createDetector(model, detectorConfig);
+                
+                // Ocultar mensaje de carga
                 setTimeout(() => {
-                    detectPose();
-                }, 100);
-
+                    loadingMessage.style.display = 'none';
+                    statsDiv.style.display = 'block';
+                }, 500);
+                
+                console.log("Modelo MoveNet cargado correctamente");
+                return detector;
             } catch (error) {
-                loadingMessage.textContent = "Error al iniciar: " + error.message;
+                console.error("Error cargando el modelo:", error);
+                loadingMessage.innerHTML = `
+                    ERROR cargando el modelo:<br>
+                    ${error.message}<br><br>
+                    Verifica tu conexión a internet.
+                `;
+                throw error;
             }
         }
-
+        
+        // ========== BUCLE PRINCIPAL OPTIMIZADO ==========
+        let renderCounter = 0;
+        
+        async function detectPose(timestamp) {
+            if (!detector || !video.videoWidth) {
+                animationFrameId = requestAnimationFrame(detectPose);
+                return;
+            }
+            
+            // Calcular FPS
+            frameCount++;
+            if (timestamp - lastTimestamp >= 1000) {
+                fps = Math.round((frameCount * 1000) / (timestamp - lastTimestamp));
+                fpsSpan.textContent = fps;
+                frameCount = 0;
+                lastTimestamp = timestamp;
+            }
+            
+            // Limpiar canvas solo si vamos a renderizar
+            if (renderCounter % config.renderInterval === 0) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Dibujar el video (con espejo)
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+                ctx.restore();
+                
+                // Detectar poses
+                try {
+                    const poses = await detector.estimatePoses(video, {
+                        maxPoses: 1,
+                        flipHorizontal: false // Ya manejamos el espejo manualmente
+                    });
+                    
+                    if (poses.length > 0) {
+                        const pose = poses[0];
+                        pointsSpan.textContent = pose.keypoints.filter(kp => kp.score > config.confidenceThreshold).length;
+                        
+                        // Dibujar puntos y esqueleto
+                        if (config.showPoints) {
+                            drawKeypoints(pose.keypoints);
+                        }
+                        if (config.showSkeleton) {
+                            drawSkeleton(pose.keypoints);
+                        }
+                    } else {
+                        pointsSpan.textContent = "0";
+                    }
+                } catch (error) {
+                    console.warn("Error en detección:", error);
+                }
+            }
+            
+            renderCounter++;
+            animationFrameId = requestAnimationFrame(detectPose);
+        }
+        
+        // ========== FUNCIONES DE DIBUJADO ==========
+        function drawKeypoints(keypoints) {
+            keypoints.forEach(keypoint => {
+                if (keypoint.score >= config.confidenceThreshold) {
+                    // Convertir coordenadas (ya están en píxeles)
+                    const x = canvas.width - keypoint.x; // Ajustar por el espejo
+                    const y = keypoint.y;
+                    
+                    // Punto exterior
+                    ctx.beginPath();
+                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fill();
+                    
+                    // Punto interior de color
+                    ctx.beginPath();
+                    ctx.arc(x, y, 6, 0, 2 * Math.PI);
+                    
+                    // Color basado en la confianza
+                    const confidenceColor = Math.floor(keypoint.score * 255);
+                    ctx.fillStyle = `rgb(0, ${confidenceColor}, 255)`;
+                    ctx.fill();
+                    
+                    // Pequeño punto central blanco
+                    ctx.beginPath();
+                    ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                    ctx.fillStyle = 'white';
+                    ctx.fill();
+                    
+                    // Opcional: mostrar nombre del punto
+                    // ctx.fillStyle = 'white';
+                    // ctx.font = '10px Arial';
+                    // ctx.fillText(keypoint.name, x + 10, y - 10);
+                }
+            });
+        }
+        
+        function drawSkeleton(keypoints) {
+            MOVENET_CONNECTIONS.forEach(([i, j]) => {
+                const kp1 = keypoints[i];
+                const kp2 = keypoints[j];
+                
+                if (kp1.score >= config.confidenceThreshold && 
+                    kp2.score >= config.confidenceThreshold) {
+                    
+                    const x1 = canvas.width - kp1.x;
+                    const y1 = kp1.y;
+                    const x2 = canvas.width - kp2.x;
+                    const y2 = kp2.y;
+                    
+                    // Línea con gradiente
+                    const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+                    gradient.addColorStop(0, 'rgba(255, 0, 255, 0.8)');
+                    gradient.addColorStop(1, 'rgba(0, 255, 255, 0.8)');
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = gradient;
+                    ctx.stroke();
+                }
+            });
+        }
+        
+        // ========== EVENT LISTENERS ==========
+        thresholdSlider.addEventListener('input', (e) => {
+            config.confidenceThreshold = parseFloat(e.target.value);
+            thresholdValue.textContent = config.confidenceThreshold.toFixed(2);
+        });
+        
+        toggleSkeletonBtn.addEventListener('click', () => {
+            config.showSkeleton = !config.showSkeleton;
+            toggleSkeletonBtn.textContent = 
+                `Mostrar Esqueleto: ${config.showSkeleton ? 'ON' : 'OFF'}`;
+        });
+        
+        togglePointsBtn.addEventListener('click', () => {
+            config.showPoints = !config.showPoints;
+            togglePointsBtn.textContent = 
+                `Mostrar Puntos: ${config.showPoints ? 'ON' : 'OFF'}`;
+        });
+        
+        resetBtn.addEventListener('click', async () => {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            
+            loadingMessage.style.display = 'block';
+            loadingMessage.textContent = "Reiniciando cámara...";
+            
+            await init();
+        });
+        
+        // ========== INICIALIZACIÓN PRINCIPAL ==========
+        async function init() {
+            try {
+                // 1. Configurar cámara
+                await setupCamera();
+                await video.play();
+                
+                // 2. Cargar modelo
+                await loadPoseDetector();
+                
+                // 3. Iniciar detección
+                lastTimestamp = performance.now();
+                detectPose();
+                
+            } catch (error) {
+                console.error("Error en inicialización:", error);
+                loadingMessage.style.color = '#ff4444';
+                loadingMessage.textContent = `Error: ${error.message}`;
+                
+                // Intentar cargar modelo de todos modos (para desarrollo sin cámara)
+                try {
+                    await loadPoseDetector();
+                    loadingMessage.textContent = "Modelo cargado pero sin cámara. Conecta una cámara y reinicia.";
+                    resetBtn.disabled = false;
+                } catch (modelError) {
+                    // Error total
+                }
+            }
+        }
+        
+        // ========== MANEJO DE VISIBILIDAD ==========
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+            } else {
+                if (!animationFrameId && detector) {
+                    detectPose();
+                }
+            }
+        });
+        
+        // ========== INICIAR APLICACIÓN ==========
         window.onload = init;
+        
+        // Manejar cierre de ventana
+        window.addEventListener('beforeunload', () => {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+        });
     </script>
     </body>
 </html>
